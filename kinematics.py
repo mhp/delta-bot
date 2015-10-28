@@ -17,6 +17,8 @@ from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
 import numpy as np
 
+class DeltaPositionError(Exception):
+    pass
 
 class SimulatedDeltaBot(object):
 
@@ -81,6 +83,40 @@ class SimulatedDeltaBot(object):
         return (x0,y0,z0)
 
 
+    def _calcAngleYZ(self, x0, y0, z0):
+        y1 = -self.f
+        y0 -= self.e
+        a = (x0*x0 + y0*y0 + z0*z0 + self.rf*self.rf - self.re*self.re - y1*y1)/(2*z0)
+        b = (y1-y0)/z0
+        d = -(a + b*y1)*(a + b*y1) + self.rf*(b*b*self.rf + self.rf)
+        if d < 0:
+            raise DeltaPositionError()
+        yj = (y1 - a*b - maths.sqrt(d))/(b*b + 1)
+        zj = a + b*yj
+        theta = 180.0*maths.atan(-zj/(y1-yj))/maths.pi
+        if yj>y1:
+            theta += 180.0
+        return theta
+
+
+    def reverse(self, x0, y0, z0):
+        """
+        Takes position and returns three servo angles, or 0,0,0 if not possible
+        return (x,y,z) if point valid, None if not
+        """
+        cos120 = maths.cos(2.0*maths.pi/3.0)
+        sin120 = maths.sin(2.0*maths.pi/3.0)
+
+        try:
+            theta1 = self._calcAngleYZ(x0, y0, z0)
+            theta2 = self._calcAngleYZ(x0*cos120 + y0*sin120, y0*cos120 - x0*sin120, z0) # rotate +120 deg
+            theta3 = self._calcAngleYZ(x0*cos120 - y0*sin120, y0*cos120 + x0*sin120, z0) # rotate -120 deg
+
+            return theta1, theta2, theta3
+        except DeltaPositionError:
+            return 0,0,0
+
+
 if __name__ == '__main__':
 
     bot = SimulatedDeltaBot(servo_link_length = 85.0, parallel_link_length = 210.0,
@@ -94,7 +130,12 @@ if __name__ == '__main__':
     for t1 in range(minServo, maxServo, step):
         for t2 in range(minServo, maxServo, step):
             for t3 in range(minServo, maxServo, step):
-                points.append(bot.forward(t1,t2,t3))
+                servos = (t1, t2, t3)
+                points.append(bot.forward(*servos))
+                there_and_back = bot.reverse(*bot.forward(*servos))
+                err = map(lambda a,b: abs(a-b), servos, there_and_back)
+                if max(err) > 0.0000000000001:
+                    print servos, there_and_back, err
 
     fig = plt.figure()
     ax = fig.add_subplot(1,1,1, projection='3d')
